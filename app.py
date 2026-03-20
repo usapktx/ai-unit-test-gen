@@ -26,11 +26,18 @@ _state: dict = {
 
 @app.route("/")
 def index():
-    return render_template("index.html",
-        default_endpoint=config.INTERNAL_AI_ENDPOINT,
-        default_key=config.INTERNAL_AI_KEY,
-        default_model=config.AI_MODEL,
+    return render_template("index.html")
+
+
+@app.route("/config-status")
+def config_status():
+    """Tells the UI whether server-side credentials are configured — no values exposed."""
+    configured = bool(
+        config.INTERNAL_AI_ENDPOINT
+        and config.INTERNAL_AI_KEY
+        and config.INTERNAL_AI_SECRET
     )
+    return jsonify({"credentials_configured": configured})
 
 
 @app.route("/browse", methods=["POST"])
@@ -77,25 +84,22 @@ def analyze():
 @app.route("/generate", methods=["POST"])
 def generate():
     data = request.get_json(force=True)
-    endpoint   = (data.get("endpoint")   or "").strip()
-    api_key    = (data.get("api_key")    or "").strip()
-    api_secret = (data.get("api_secret") or "").strip()
-    model      = (data.get("model")      or config.AI_MODEL).strip()
-    framework  = (data.get("framework")  or config.DEFAULT_TEST_FRAMEWORK).strip()
+    framework = (data.get("framework") or config.DEFAULT_TEST_FRAMEWORK).strip()
+    # Model is server-side config only — never from the client
+    model = config.AI_MODEL
 
-    if not endpoint:
-        return jsonify({"error": "API Endpoint is required"}), 400
-    if not api_key:
-        return jsonify({"error": "API Key is required"}), 400
-    if not api_secret:
-        return jsonify({"error": "API Secret is required"}), 400
+    # Credentials are loaded from server-side env / .env only — never from the client
+    if not (config.INTERNAL_AI_ENDPOINT and config.INTERNAL_AI_KEY and config.INTERNAL_AI_SECRET):
+        return jsonify({"error": "AI API credentials are not configured on this server. "
+                                 "Set INTERNAL_AI_ENDPOINT, INTERNAL_AI_KEY, and "
+                                 "INTERNAL_AI_SECRET in .env or environment variables."}), 503
     if not _state["solution"]:
         return jsonify({"error": "Analyze a solution first"}), 400
 
     credentials = AICredentials(
-        endpoint=endpoint,
-        api_key=api_key,
-        api_secret=api_secret,
+        endpoint=config.INTERNAL_AI_ENDPOINT,
+        api_key=config.INTERNAL_AI_KEY,
+        api_secret=config.INTERNAL_AI_SECRET,
         model=model,
     )
 

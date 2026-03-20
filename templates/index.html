@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>.NET Unit Test Generator — GPT-5</title>
+<title>.NET Unit Test Generator</title>
 <style>
 :root {
   --bg:       #1e1e2e;
@@ -135,7 +135,7 @@ input.path{flex:1;min-width:200px}
 <!-- ── Header ── -->
 <div class="hdr">
   <span class="hdr-title">.NET Unit Test Generator</span>
-  <span class="hdr-sub">Powered by GPT-5 &nbsp;|&nbsp; OpenAI</span>
+  <span class="hdr-sub">AI-Powered Test Generation</span>
 </div>
 
 <div class="wrap">
@@ -152,12 +152,7 @@ input.path{flex:1;min-width:200px}
     </div>
 
     <div class="row">
-      <label>API Endpoint</label>
-      <input id="apiEndpoint" class="path" type="text" value="{{ default_endpoint }}"
-             placeholder="https://internal-ai.example.com/v1" style="flex:1;min-width:260px">
-      <label style="min-width:auto;margin-left:16px">Model</label>
-      <input id="model" type="text" value="{{ default_model }}" style="width:130px">
-      <label style="min-width:auto;margin-left:16px">Framework</label>
+      <label>Framework</label>
       <select id="framework">
         <option value="xunit">xUnit</option>
         <option value="nunit">NUnit</option>
@@ -165,13 +160,8 @@ input.path{flex:1;min-width:200px}
       </select>
     </div>
 
-    <div class="row">
-      <label>API Key</label>
-      <input id="apiKey" type="password" value="{{ default_key }}" style="width:280px" placeholder="Your internal API key">
-      <button class="show-toggle" onclick="toggleField('apiKey', this)">Show</button>
-      <label style="min-width:auto;margin-left:24px">API Secret</label>
-      <input id="apiSecret" type="password" style="width:280px" placeholder="Your internal API secret">
-      <button class="show-toggle" onclick="toggleField('apiSecret', this)">Show</button>
+    <div id="credWarn" class="alert alert-err hidden">
+      AI API credentials are not configured on this server. Contact your administrator.
     </div>
 
     <div class="prog-wrap"><div id="topBar" class="prog-bar"></div></div>
@@ -197,7 +187,7 @@ input.path{flex:1;min-width:200px}
   <!-- ── Generate button ── -->
   <div class="center">
     <button id="genBtn" class="btn btn-generate" onclick="generate()" disabled>
-      ⚡&nbsp; Generate Unit Tests with GPT-5
+      ⚡&nbsp; Generate Unit Tests
     </button>
   </div>
 
@@ -238,17 +228,25 @@ function busy(on){
   else  { bar.classList.remove('indeterminate'); bar.style.width='0'; }
 }
 
-function toggleField(id, btn){
-  const el = document.getElementById(id);
-  if(el.type === 'password'){ el.type='text'; btn.textContent='Hide'; }
-  else { el.type='password'; btn.textContent='Show'; }
-}
-
 // ─────────────────────────────────────────────
 //  Log
 // ─────────────────────────────────────────────
 let logEl;
-window.addEventListener('DOMContentLoaded', ()=>{ logEl = document.getElementById('log'); });
+window.addEventListener('DOMContentLoaded', ()=>{
+  logEl = document.getElementById('log');
+  checkCredentials();
+});
+
+async function checkCredentials(){
+  try{
+    const r = await fetch('/config-status');
+    const d = await r.json();
+    if(!d.credentials_configured){
+      document.getElementById('credWarn').classList.remove('hidden');
+      document.getElementById('genBtn').disabled = true;
+    }
+  }catch(_){}
+}
 
 function logLine(msg, cls='l-info'){
   if(!logEl) return;
@@ -318,15 +316,7 @@ async function analyze(){
 //  Generate
 // ─────────────────────────────────────────────
 async function generate(){
-  const endpoint  = document.getElementById('apiEndpoint').value.trim();
-  const apiKey    = document.getElementById('apiKey').value.trim();
-  const apiSecret = document.getElementById('apiSecret').value.trim();
-  const model     = document.getElementById('model').value.trim();
   const framework = document.getElementById('framework').value;
-
-  if(!endpoint)  { alert('Enter the API Endpoint URL.'); return; }
-  if(!apiKey)    { alert('Enter the API Key.'); return; }
-  if(!apiSecret) { alert('Enter the API Secret.'); return; }
 
   logLine('\n=== Generating unit tests ===');
   document.getElementById('genBtn').disabled = true;
@@ -334,11 +324,11 @@ async function generate(){
   document.getElementById('covAfter').innerHTML  = '<span style="color:var(--dim)">Generating…</span>';
   busy(true); setStatus('Generating tests…');
 
-  // Start generation on server
+  // Only framework is sent — all AI config is server-side
   const startRes = await fetch('/generate',{
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({endpoint, api_key:apiKey, api_secret:apiSecret, model, framework})
+    body:JSON.stringify({framework})
   });
   if(!startRes.ok){
     const d = await startRes.json();
