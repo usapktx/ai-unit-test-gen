@@ -42,15 +42,52 @@ def config_status():
 
 @app.route("/browse", methods=["POST"])
 def browse():
-    """Open a native macOS folder picker via osascript."""
+    """Open a native folder picker dialog — cross-platform."""
+    import sys
     try:
-        result = subprocess.run(
-            ["osascript", "-e", "set f to choose folder\nPOSIX path of f"],
-            capture_output=True, text=True, timeout=60,
-        )
-        if result.returncode == 0:
-            return jsonify({"path": result.stdout.strip()})
-        return jsonify({"error": "Dialog cancelled or not supported"}), 400
+        if sys.platform == "darwin":
+            # macOS — osascript
+            result = subprocess.run(
+                ["osascript", "-e", "set f to choose folder\nPOSIX path of f"],
+                capture_output=True, text=True, timeout=60,
+            )
+            if result.returncode == 0:
+                return jsonify({"path": result.stdout.strip()})
+            return jsonify({"error": "Dialog cancelled"}), 400
+
+        elif sys.platform == "win32":
+            # Windows — PowerShell FolderBrowserDialog
+            ps_script = (
+                "Add-Type -AssemblyName System.Windows.Forms;"
+                "$d = New-Object System.Windows.Forms.FolderBrowserDialog;"
+                "$d.Description = 'Select .NET solution folder';"
+                "[void]$d.ShowDialog();"
+                "$d.SelectedPath"
+            )
+            result = subprocess.run(
+                ["powershell", "-NoProfile", "-Command", ps_script],
+                capture_output=True, text=True, timeout=60,
+            )
+            path = result.stdout.strip()
+            if result.returncode == 0 and path:
+                return jsonify({"path": path})
+            return jsonify({"error": "Dialog cancelled"}), 400
+
+        else:
+            # Linux — try zenity, fall back to kdialog
+            for cmd in [
+                ["zenity", "--file-selection", "--directory", "--title=Select .NET solution folder"],
+                ["kdialog", "--getexistingdirectory", os.path.expanduser("~")],
+            ]:
+                try:
+                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                    path = result.stdout.strip()
+                    if result.returncode == 0 and path:
+                        return jsonify({"path": path})
+                except FileNotFoundError:
+                    continue
+            return jsonify({"error": "No folder dialog available. Please paste the path manually."}), 400
+
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
