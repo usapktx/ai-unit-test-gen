@@ -1,9 +1,10 @@
-"""Flask web application — replaces the crashed tkinter UI."""
+"""Flask web application."""
 
 import json
 import os
 import queue
 import subprocess
+import sys
 import threading
 
 from flask import Flask, Response, jsonify, render_template, request, stream_with_context
@@ -21,6 +22,52 @@ _state: dict = {
 
 
 # =========================================================
+#  Helpers
+# =========================================================
+
+def _normalize_path(raw: str) -> str:
+    """Strip quotes, whitespace, carriage returns, then normalize separators."""
+    path = (raw or "").strip().strip('"').strip("'").strip('\r').strip()
+    return os.path.normpath(path) if path else ""
+
+
+def _flush_queue():
+    while not _state["progress_queue"].empty():
+        try:
+            _state["progress_queue"].get_nowait()
+        except queue.Empty:
+            break
+
+
+def _sse_stream():
+    """
+    Generator that reads from the shared progress queue and yields SSE events.
+    Sends a keepalive ping every 25 s of silence. Stops on done/error message.
+    """
+    while True:
+        try:
+            msg = _state["progress_queue"].get(timeout=25)
+            yield f"data: {json.dumps(msg)}\n\n"
+            if msg["type"] in ("done", "error"):
+                break
+        except queue.Empty:
+            yield 'data: {"type":"ping"}\n\n'
+
+
+def _sse_response():
+    """Return a Flask Response that streams _sse_stream() with correct headers."""
+    return Response(
+        stream_with_context(_sse_stream()),
+        mimetype="text/event-stream",
+        headers={
+            "Cache-Control":     "no-cache",
+            "X-Accel-Buffering": "no",      # nginx: disable proxy buffering
+            "Connection":        "keep-alive",
+        },
+    )
+
+
+# =========================================================
 #  Routes
 # =========================================================
 
@@ -31,7 +78,7 @@ def index():
 
 @app.route("/config-status")
 def config_status():
-    """Tells the UI whether server-side credentials are configured — no values exposed."""
+    """Returns whether server-side credentials are configured — no values exposed."""
     configured = bool(
         config.INTERNAL_AI_ENDPOINT
         and config.INTERNAL_AI_KEY
@@ -40,13 +87,13 @@ def config_status():
     return jsonify({"credentials_configured": configured})
 
 
+# ── Browse ────────────────────────────────────────────────────────────────────
+
 @app.route("/browse", methods=["POST"])
 def browse():
     """Open a native folder picker dialog — cross-platform."""
-    import sys
     try:
         if sys.platform == "darwin":
-            # macOS — osascript
             result = subprocess.run(
                 ["osascript", "-e", "set f to choose folder\nPOSIX path of f"],
                 capture_output=True, text=True, timeout=60,
@@ -56,7 +103,6 @@ def browse():
             return jsonify({"error": "Dialog cancelled"}), 400
 
         elif sys.platform == "win32":
-            # Windows — PowerShell FolderBrowserDialog
             ps_script = (
                 "Add-Type -AssemblyName System.Windows.Forms;"
                 "$d = New-Object System.Windows.Forms.FolderBrowserDialog;"
@@ -74,33 +120,35 @@ def browse():
             return jsonify({"error": "Dialog cancelled"}), 400
 
         else:
-            # Linux — try zenity, fall back to kdialog
             for cmd in [
-                ["zenity", "--file-selection", "--directory", "--title=Select .NET solution folder"],
+                ["zenity", "--file-selection", "--directory",
+                 "--title=Select .NET solution folder"],
                 ["kdialog", "--getexistingdirectory", os.path.expanduser("~")],
             ]:
                 try:
-                    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+                    result = subprocess.run(
+                        cmd, capture_output=True, text=True, timeout=60
+                    )
                     path = result.stdout.strip()
                     if result.returncode == 0 and path:
                         return jsonify({"path": path})
                 except FileNotFoundError:
                     continue
-            return jsonify({"error": "No folder dialog available. Please paste the path manually."}), 400
+            return jsonify({
+                "error": "No folder dialog available. Please paste the path manually."
+            }), 400
 
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
 
+# ── Analyze ───────────────────────────────────────────────────────────────────
+
 @app.route("/analyze", methods=["POST"])
 def analyze():
-    data = request.get_json(force=True)
-    folder = (data.get("folder") or "").strip()
-
-    # Normalize: strip surrounding quotes, carriage returns, and unify separators
-    folder = folder.strip('"').strip("'").strip('\r').strip()
-    if folder:
-        folder = os.path.normpath(folder)
+    """Validate path, start background analysis, return immediately."""
+    data   = request.get_json(force=True)
+    folder = _normalize_path(data.get("folder") or "")
 
     if not folder or not os.path.isdir(folder):
         return jsonify({
@@ -108,38 +156,64 @@ def analyze():
                      "Verify the path exists and the app has permission to read it."
         }), 400
 
-    progress: list[str] = []
+    _flush_queue()
 
-    from generator.orchestrator import analyze_only
-    solution, coverage = analyze_only(folder, progress.append)
+    def run():
+        def cb(msg):
+            _state["progress_queue"].put({"type": "log", "msg": msg})
+        try:
+            from generator.orchestrator import analyze_only
+            solution, coverage = analyze_only(folder, cb)
+            if not solution:
+                _state["progress_queue"].put({
+                    "type": "error",
+                    "msg":  "No .sln file found in the selected folder or its subdirectories."
+                })
+                return
+            _state["solution"] = solution
+            _state["progress_queue"].put({
+                "type":   "done",
+                "result": {
+                    "solution": _ser_solution(solution),
+                    "coverage": _ser_coverage(coverage),
+                },
+            })
+        except Exception:
+            import traceback
+            _state["progress_queue"].put({
+                "type": "error", "msg": traceback.format_exc()
+            })
 
-    if not solution:
-        return jsonify({"error": "No .sln file found in selected folder",
-                        "progress": progress}), 404
+    threading.Thread(target=run, daemon=True).start()
+    return jsonify({"status": "started"})
 
-    _state["solution"] = solution
 
-    return jsonify({
-        "progress": progress,
-        "solution": _ser_solution(solution),
-        "coverage": _ser_coverage(coverage),
-    })
+@app.route("/analyze-stream")
+def analyze_stream():
+    """SSE stream for real-time analyze progress."""
+    return _sse_response()
 
+
+# ── Generate ──────────────────────────────────────────────────────────────────
 
 @app.route("/generate", methods=["POST"])
 def generate():
-    data = request.get_json(force=True)
+    """Validate credentials, start background generation, return immediately."""
+    data      = request.get_json(force=True)
     framework = (data.get("framework") or config.DEFAULT_TEST_FRAMEWORK).strip()
-    # Model is server-side config only — never from the client
-    model = config.AI_MODEL
+    model     = config.AI_MODEL   # never from the client
 
-    # Credentials are loaded from server-side env / .env only — never from the client
-    if not (config.INTERNAL_AI_ENDPOINT and config.INTERNAL_AI_KEY and config.INTERNAL_AI_SECRET):
-        return jsonify({"error": "AI API credentials are not configured on this server. "
-                                 "Set INTERNAL_AI_ENDPOINT, INTERNAL_AI_KEY, and "
-                                 "INTERNAL_AI_SECRET in .env or environment variables."}), 503
+    if not (config.INTERNAL_AI_ENDPOINT
+            and config.INTERNAL_AI_KEY
+            and config.INTERNAL_AI_SECRET):
+        return jsonify({
+            "error": "AI API credentials are not configured on this server. "
+                     "Set INTERNAL_AI_ENDPOINT, INTERNAL_AI_KEY, and "
+                     "INTERNAL_AI_SECRET in .env or environment variables."
+        }), 503
+
     if not _state["solution"]:
-        return jsonify({"error": "Analyze a solution first"}), 400
+        return jsonify({"error": "Analyze a solution first."}), 400
 
     credentials = AICredentials(
         endpoint=config.INTERNAL_AI_ENDPOINT,
@@ -148,30 +222,27 @@ def generate():
         model=model,
     )
 
-    # Flush stale queue entries
-    while not _state["progress_queue"].empty():
-        try:
-            _state["progress_queue"].get_nowait()
-        except queue.Empty:
-            break
+    _flush_queue()
 
     def run():
-        from generator.orchestrator import generate_all_tests
-
         def cb(msg):
             _state["progress_queue"].put({"type": "log", "msg": msg})
-
         try:
+            from generator.orchestrator import generate_all_tests
             result = generate_all_tests(
                 solution=_state["solution"],
                 credentials=credentials,
                 test_framework=framework,
                 progress_cb=cb,
             )
-            _state["progress_queue"].put({"type": "done", "result": _ser_result(result)})
+            _state["progress_queue"].put({
+                "type": "done", "result": _ser_result(result)
+            })
         except Exception:
             import traceback
-            _state["progress_queue"].put({"type": "error", "msg": traceback.format_exc()})
+            _state["progress_queue"].put({
+                "type": "error", "msg": traceback.format_exc()
+            })
 
     threading.Thread(target=run, daemon=True).start()
     return jsonify({"status": "started"})
@@ -179,22 +250,8 @@ def generate():
 
 @app.route("/generate-stream")
 def generate_stream():
-    """SSE endpoint — streams progress messages to the browser."""
-    def event_gen():
-        while True:
-            try:
-                msg = _state["progress_queue"].get(timeout=30)
-                yield f"data: {json.dumps(msg)}\n\n"
-                if msg["type"] in ("done", "error"):
-                    break
-            except queue.Empty:
-                yield "data: {\"type\":\"ping\"}\n\n"
-
-    return Response(
-        stream_with_context(event_gen()),
-        mimetype="text/event-stream",
-        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
-    )
+    """SSE stream for real-time generate progress."""
+    return _sse_response()
 
 
 # =========================================================
@@ -221,16 +278,18 @@ def _ser_coverage(cov):
     if cov is None:
         return None
     return {
-        "line_pct": cov.line_pct,
+        "line_pct":   cov.line_pct,
         "branch_pct": cov.branch_pct,
-        "error": cov.error,
+        "error":      cov.error,
         "packages": [
             {
-                "name": pkg.name,
-                "line_pct": pkg.line_pct,
+                "name":       pkg.name,
+                "line_pct":   pkg.line_pct,
                 "branch_pct": pkg.branch_pct,
                 "classes": [
-                    {"name": c.name, "line_pct": c.line_pct, "branch_pct": c.branch_pct}
+                    {"name": c.name,
+                     "line_pct": c.line_pct,
+                     "branch_pct": c.branch_pct}
                     for c in sorted(pkg.classes, key=lambda x: x.line_rate)
                 ],
             }
@@ -243,15 +302,15 @@ def _ser_result(result):
     return {
         "generated_tests": [
             {
-                "class_name": t.class_name,
-                "test_file": os.path.basename(t.test_file_path),
+                "class_name":    t.class_name,
+                "test_file":     os.path.basename(t.test_file_path),
                 "source_project": t.source_project,
-                "test_project": t.test_project,
-                "method_count": t.method_count,
+                "test_project":  t.test_project,
+                "method_count":  t.method_count,
             }
             for t in result.generated_tests
         ],
         "coverage_before": _ser_coverage(result.coverage_before),
         "coverage_after":  _ser_coverage(result.coverage_after),
-        "errors": result.errors,
+        "errors":          result.errors,
     }

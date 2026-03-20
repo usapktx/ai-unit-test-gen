@@ -287,29 +287,50 @@ async function analyze(){
   clearLog();
   logLine('=== Analyzing solution ===');
   busy(true); setStatus('Analyzing…');
-
   document.getElementById('solutionTree').innerHTML = '<span style="color:var(--dim)">Loading…</span>';
   document.getElementById('covBefore').innerHTML    = '<span style="color:var(--dim)">Loading…</span>';
   document.getElementById('genBtn').disabled = true;
 
-  try{
-    const r   = await fetch('/analyze', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder})});
-    const d   = await r.json();
+  // Start analysis on server
+  const startRes = await fetch('/analyze', {
+    method:'POST', headers:{'Content-Type':'application/json'},
+    body: JSON.stringify({folder})
+  });
+  if(!startRes.ok){
+    const d = await startRes.json();
+    logLine('Error: '+(d.error||startRes.statusText), 'l-error');
+    busy(false); setStatus('Analysis failed.'); return;
+  }
 
-    (d.progress||[]).forEach(m => logLine(m));
+  // Stream real-time progress via SSE
+  const evtSrc = new EventSource('/analyze-stream');
+  evtSrc.onmessage = function(e){
+    const msg = JSON.parse(e.data);
+    if(msg.type === 'ping') return;
+    if(msg.type === 'log'){ logLine(msg.msg); return; }
 
-    if(!r.ok){ logLine('Error: ' + (d.error||r.statusText), 'l-error'); busy(false); setStatus('Analysis failed.'); return; }
+    evtSrc.close();
+    busy(false);
 
-    renderSolution(d.solution);
-    renderCoverage('covBefore', d.coverage);
+    if(msg.type === 'error'){
+      logLine('Error: ' + msg.msg, 'l-error');
+      setStatus('Analysis failed.'); return;
+    }
 
+    // done
+    const res = msg.result;
+    renderSolution(res.solution);
+    renderCoverage('covBefore', res.coverage);
     document.getElementById('genBtn').disabled = false;
-    setStatus(`Ready — ${d.solution.source_projects.length} source project(s) | Line coverage: ${d.coverage.line_pct}%`);
-    logLine(`Analysis complete. Line coverage: ${d.coverage.line_pct}%  Branch: ${d.coverage.branch_pct}%`, 'l-success');
-    if(d.coverage.error) logLine('Note: ' + d.coverage.error, 'l-warn');
-  }catch(e){ logLine('Error: '+e,'l-error'); setStatus('Analysis failed.'); }
-
-  busy(false);
+    setStatus(`Ready — ${res.solution.source_projects.length} source project(s) | Line coverage: ${res.coverage.line_pct}%`);
+    logLine(`Analysis complete. Line coverage: ${res.coverage.line_pct}%  Branch: ${res.coverage.branch_pct}%`, 'l-success');
+    if(res.coverage.error) logLine('Note: ' + res.coverage.error, 'l-warn');
+  };
+  evtSrc.onerror = function(){
+    evtSrc.close(); busy(false);
+    logLine('Connection lost during analysis.', 'l-warn');
+    setStatus('Analysis failed.');
+  };
 }
 
 // ─────────────────────────────────────────────
