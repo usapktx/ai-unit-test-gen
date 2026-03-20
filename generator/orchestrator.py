@@ -11,6 +11,7 @@ from analyzer.csharp_parser import parse_file, CSharpClass
 from coverage.coverage_runner import CoverageReport, run_coverage, estimate_coverage_static
 from generator.test_generator import generate_tests_for_class, generate_missing_tests
 from generator.project_manager import ensure_test_project, write_test_file
+from config import AICredentials
 import config
 
 
@@ -59,7 +60,7 @@ def analyze_only(
 
 def generate_all_tests(
     solution: SolutionInfo,
-    api_key: str,
+    credentials: AICredentials,
     test_framework: str,
     progress_cb: Optional[Callable[[str], None]] = None,
 ) -> OrchestrationResult:
@@ -97,7 +98,7 @@ def generate_all_tests(
         # Process each source file
         for sf in src_proj.source_files:
             _process_source_file(
-                sf, src_proj, test_proj, api_key, tf, result, progress_cb
+                sf, src_proj, test_proj, credentials, tf, result, progress_cb
             )
 
     if progress_cb:
@@ -111,7 +112,7 @@ def _process_source_file(
     source_file: str,
     src_proj: DotNetProject,
     test_proj: DotNetProject,
-    api_key: str,
+    credentials: AICredentials,
     test_framework: str,
     result: OrchestrationResult,
     progress_cb,
@@ -155,7 +156,7 @@ def _process_source_file(
                 existing_test_code=existing_test_code,
                 test_framework=test_framework,
                 source_project_name=src_proj.name,
-                api_key=api_key,
+                credentials=credentials,
                 progress_cb=progress_cb,
             )
         else:
@@ -165,7 +166,7 @@ def _process_source_file(
                 namespace=parsed.namespace,
                 test_framework=test_framework,
                 source_project_name=src_proj.name,
-                api_key=api_key,
+                credentials=credentials,
                 progress_cb=progress_cb,
             )
 

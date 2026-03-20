@@ -152,17 +152,26 @@ input.path{flex:1;min-width:200px}
     </div>
 
     <div class="row">
-      <label>OpenAI API Key</label>
-      <input id="apiKey" type="password" style="width:300px" placeholder="sk-…">
-      <button class="show-toggle" onclick="toggleKey()">Show</button>
+      <label>API Endpoint</label>
+      <input id="apiEndpoint" class="path" type="text" value="{{ default_endpoint }}"
+             placeholder="https://internal-ai.example.com/v1" style="flex:1;min-width:260px">
       <label style="min-width:auto;margin-left:16px">Model</label>
-      <input id="model" type="text" value="{{ default_model }}" style="width:140px">
+      <input id="model" type="text" value="{{ default_model }}" style="width:130px">
       <label style="min-width:auto;margin-left:16px">Framework</label>
       <select id="framework">
         <option value="xunit">xUnit</option>
         <option value="nunit">NUnit</option>
         <option value="mstest">MSTest</option>
       </select>
+    </div>
+
+    <div class="row">
+      <label>API Key</label>
+      <input id="apiKey" type="password" value="{{ default_key }}" style="width:280px" placeholder="Your internal API key">
+      <button class="show-toggle" onclick="toggleField('apiKey', this)">Show</button>
+      <label style="min-width:auto;margin-left:24px">API Secret</label>
+      <input id="apiSecret" type="password" style="width:280px" placeholder="Your internal API secret">
+      <button class="show-toggle" onclick="toggleField('apiSecret', this)">Show</button>
     </div>
 
     <div class="prog-wrap"><div id="topBar" class="prog-bar"></div></div>
@@ -229,9 +238,8 @@ function busy(on){
   else  { bar.classList.remove('indeterminate'); bar.style.width='0'; }
 }
 
-function toggleKey(){
-  const el = document.getElementById('apiKey');
-  const btn = event.target;
+function toggleField(id, btn){
+  const el = document.getElementById(id);
   if(el.type === 'password'){ el.type='text'; btn.textContent='Hide'; }
   else { el.type='password'; btn.textContent='Show'; }
 }
@@ -310,11 +318,15 @@ async function analyze(){
 //  Generate
 // ─────────────────────────────────────────────
 async function generate(){
-  const apiKey   = document.getElementById('apiKey').value.trim();
-  const model    = document.getElementById('model').value.trim();
-  const framework= document.getElementById('framework').value;
+  const endpoint  = document.getElementById('apiEndpoint').value.trim();
+  const apiKey    = document.getElementById('apiKey').value.trim();
+  const apiSecret = document.getElementById('apiSecret').value.trim();
+  const model     = document.getElementById('model').value.trim();
+  const framework = document.getElementById('framework').value;
 
-  if(!apiKey){ alert('Enter your OpenAI API key first.'); return; }
+  if(!endpoint)  { alert('Enter the API Endpoint URL.'); return; }
+  if(!apiKey)    { alert('Enter the API Key.'); return; }
+  if(!apiSecret) { alert('Enter the API Secret.'); return; }
 
   logLine('\n=== Generating unit tests ===');
   document.getElementById('genBtn').disabled = true;
@@ -326,7 +338,7 @@ async function generate(){
   const startRes = await fetch('/generate',{
     method:'POST',
     headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({api_key:apiKey, model, framework})
+    body:JSON.stringify({endpoint, api_key:apiKey, api_secret:apiSecret, model, framework})
   });
   if(!startRes.ok){
     const d = await startRes.json();

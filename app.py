@@ -9,6 +9,7 @@ import threading
 from flask import Flask, Response, jsonify, render_template, request, stream_with_context
 
 import config
+from config import AICredentials
 
 app = Flask(__name__)
 
@@ -25,7 +26,11 @@ _state: dict = {
 
 @app.route("/")
 def index():
-    return render_template("index.html", default_model=config.OPENAI_MODEL)
+    return render_template("index.html",
+        default_endpoint=config.INTERNAL_AI_ENDPOINT,
+        default_key=config.INTERNAL_AI_KEY,
+        default_model=config.AI_MODEL,
+    )
 
 
 @app.route("/browse", methods=["POST"])
@@ -72,17 +77,27 @@ def analyze():
 @app.route("/generate", methods=["POST"])
 def generate():
     data = request.get_json(force=True)
-    api_key   = (data.get("api_key") or "").strip()
-    model     = (data.get("model") or config.OPENAI_MODEL).strip()
-    framework = (data.get("framework") or config.DEFAULT_TEST_FRAMEWORK).strip()
+    endpoint   = (data.get("endpoint")   or "").strip()
+    api_key    = (data.get("api_key")    or "").strip()
+    api_secret = (data.get("api_secret") or "").strip()
+    model      = (data.get("model")      or config.AI_MODEL).strip()
+    framework  = (data.get("framework")  or config.DEFAULT_TEST_FRAMEWORK).strip()
 
+    if not endpoint:
+        return jsonify({"error": "API Endpoint is required"}), 400
     if not api_key:
-        return jsonify({"error": "OpenAI API key is required"}), 400
+        return jsonify({"error": "API Key is required"}), 400
+    if not api_secret:
+        return jsonify({"error": "API Secret is required"}), 400
     if not _state["solution"]:
         return jsonify({"error": "Analyze a solution first"}), 400
 
-    config.OPENAI_MODEL = model
-    config.OPENAI_API_KEY = api_key
+    credentials = AICredentials(
+        endpoint=endpoint,
+        api_key=api_key,
+        api_secret=api_secret,
+        model=model,
+    )
 
     # Flush stale queue entries
     while not _state["progress_queue"].empty():
@@ -100,7 +115,7 @@ def generate():
         try:
             result = generate_all_tests(
                 solution=_state["solution"],
-                api_key=api_key,
+                credentials=credentials,
                 test_framework=framework,
                 progress_cb=cb,
             )
