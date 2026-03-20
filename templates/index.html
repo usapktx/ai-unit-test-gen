@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>.NET Unit Test Generator — GPT-5</title>
+<style>
+:root {
+  --bg:       #1e1e2e;
+  --surface:  #2a2a3e;
+  --surface2: #32324a;
+  --accent:   #7c3aed;
+  --accent-h: #6d28d9;
+  --cyan:     #06b6d4;
+  --green:    #22c55e;
+  --amber:    #f59e0b;
+  --red:      #ef4444;
+  --text:     #e2e8f0;
+  --dim:      #94a3b8;
+  --border:   #3f3f5c;
+  --radius:   8px;
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;font-size:14px}
+
+/* ── Header ── */
+.hdr{background:var(--accent);padding:12px 24px;display:flex;align-items:center;justify-content:space-between;box-shadow:0 2px 12px #0006}
+.hdr-title{font-size:20px;font-weight:700;letter-spacing:.4px}
+.hdr-sub{color:#c4b5fd;font-size:13px}
+
+/* ── Layout ── */
+.wrap{max-width:1400px;margin:0 auto;padding:18px 20px;display:flex;flex-direction:column;gap:16px}
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);padding:16px}
+.card-title{color:var(--cyan);font-weight:700;font-size:13px;text-transform:uppercase;letter-spacing:.6px;margin-bottom:12px}
+.two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+
+/* ── Form controls ── */
+.row{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+.row:last-child{margin-bottom:0}
+label{color:var(--dim);font-size:13px;white-space:nowrap;min-width:110px}
+input[type=text],input[type=password],select{
+  background:var(--surface2);border:1px solid var(--border);border-radius:6px;
+  color:var(--text);padding:7px 10px;font-size:13px;outline:none;
+  transition:border-color .2s}
+input[type=text]:focus,input[type=password]:focus,select:focus{border-color:var(--accent)}
+input.path{flex:1;min-width:200px}
+.show-toggle{background:none;border:1px solid var(--border);border-radius:6px;
+  color:var(--dim);cursor:pointer;padding:6px 10px;font-size:12px;transition:all .2s}
+.show-toggle:hover{border-color:var(--accent);color:var(--text)}
+
+/* ── Buttons ── */
+.btn{border:none;border-radius:6px;cursor:pointer;font-weight:600;
+  padding:8px 18px;font-size:13px;transition:all .2s;white-space:nowrap}
+.btn-accent{background:var(--accent);color:#fff}
+.btn-accent:hover{background:var(--accent-h)}
+.btn-accent:disabled{opacity:.45;cursor:not-allowed}
+.btn-generate{
+  background:linear-gradient(135deg,var(--green),#16a34a);color:#fff;
+  font-size:15px;padding:13px 40px;border-radius:10px;
+  box-shadow:0 4px 20px #22c55e40;letter-spacing:.3px}
+.btn-generate:hover{box-shadow:0 4px 28px #22c55e70;transform:translateY(-1px)}
+.btn-generate:disabled{opacity:.45;cursor:not-allowed;transform:none;box-shadow:none}
+.center{display:flex;justify-content:center;padding:6px 0}
+
+/* ── Progress bar ── */
+.prog-wrap{height:4px;background:var(--surface2);border-radius:4px;overflow:hidden;margin-top:8px}
+.prog-bar{height:4px;background:var(--cyan);border-radius:4px;width:0;transition:width .3s;
+  background:linear-gradient(90deg,var(--accent),var(--cyan))}
+.prog-bar.indeterminate{width:40%;animation:slide 1.4s infinite linear}
+@keyframes slide{0%{transform:translateX(-200%)}100%{transform:translateX(350%)}}
+
+/* ── Solution tree ── */
+.proj-list{list-style:none;display:flex;flex-direction:column;gap:4px}
+.proj-item{background:var(--surface2);border-radius:6px;padding:8px 12px;
+  display:flex;align-items:center;gap:10px}
+.proj-badge{font-size:11px;padding:2px 8px;border-radius:99px;font-weight:600}
+.badge-src{background:#1e3a5f;color:#60a5fa}
+.badge-test{background:#14532d;color:#4ade80}
+.proj-detail{color:var(--dim);font-size:12px;margin-left:auto}
+.proj-section{color:var(--cyan);font-size:12px;font-weight:700;margin:8px 0 4px;
+  text-transform:uppercase;letter-spacing:.5px}
+
+/* ── Coverage table ── */
+.cov-table{width:100%;border-collapse:collapse;font-size:13px}
+.cov-table th{text-align:left;padding:6px 10px;color:var(--dim);font-weight:600;
+  border-bottom:1px solid var(--border)}
+.cov-table td{padding:6px 10px;border-bottom:1px solid #2a2a3e}
+.cov-table tr:last-child td{border-bottom:none}
+.cov-table tr.pkg-row{font-weight:600;background:var(--surface2)}
+.cov-table tr.cls-row td:first-child{padding-left:24px;color:var(--dim)}
+.pct{font-weight:700}
+.pct.good{color:var(--green)}
+.pct.warn{color:var(--amber)}
+.pct.bad {color:var(--red)}
+.bar-cell{width:80px}
+.mini-bar{height:6px;background:var(--border);border-radius:3px;overflow:hidden}
+.mini-bar-fill{height:100%;border-radius:3px;transition:width .5s}
+.fill-good{background:var(--green)}
+.fill-warn{background:var(--amber)}
+.fill-bad {background:var(--red)}
+.cov-overall{font-size:15px;font-weight:700;margin-bottom:12px;padding:10px 14px;
+  background:var(--surface2);border-radius:8px;display:flex;gap:24px}
+
+/* ── Log ── */
+.log{background:#0f0f1a;border:1px solid var(--border);border-radius:8px;
+  padding:12px 14px;height:220px;overflow-y:auto;font-family:'Courier New',monospace;
+  font-size:12px;line-height:1.7;white-space:pre-wrap;word-break:break-word}
+.log .l-info   {color:var(--text)}
+.log .l-success{color:var(--green)}
+.log .l-warn   {color:var(--amber)}
+.log .l-error  {color:var(--red)}
+.log .l-section{color:var(--cyan);font-weight:700}
+
+/* ── New tests table ── */
+.tests-table{width:100%;border-collapse:collapse;font-size:13px}
+.tests-table th{text-align:left;padding:6px 10px;color:var(--dim);font-weight:600;border-bottom:1px solid var(--border)}
+.tests-table td{padding:7px 10px;border-bottom:1px solid #2a2a3e}
+.tests-table tr:last-child td{border-bottom:none}
+.method-badge{background:var(--accent);color:#fff;border-radius:99px;
+  padding:1px 8px;font-size:11px;font-weight:700}
+
+/* ── Status bar ── */
+.statusbar{position:fixed;bottom:0;left:0;right:0;background:var(--surface);
+  border-top:1px solid var(--border);padding:5px 18px;font-size:12px;color:var(--dim)}
+
+/* ── Alerts ── */
+.alert{padding:10px 14px;border-radius:6px;font-size:13px;margin-top:8px}
+.alert-warn{background:#451a03;color:var(--amber);border:1px solid #92400e}
+.alert-err {background:#450a0a;color:var(--red);border:1px solid #991b1b}
+.hidden{display:none}
+</style>
+</head>
+<body>
+
+<!-- ── Header ── -->
+<div class="hdr">
+  <span class="hdr-title">.NET Unit Test Generator</span>
+  <span class="hdr-sub">Powered by GPT-5 &nbsp;|&nbsp; OpenAI</span>
+</div>
+
+<div class="wrap">
+
+  <!-- ── Config card ── -->
+  <div class="card">
+    <div class="card-title">Configuration</div>
+
+    <div class="row">
+      <label>Solution Folder</label>
+      <input id="folderPath" class="path" type="text" placeholder="Path to folder containing .sln file…">
+      <button class="btn btn-accent" onclick="browse()">Browse…</button>
+      <button id="analyzeBtn" class="btn btn-accent" onclick="analyze()">Analyze Solution</button>
+    </div>
+
+    <div class="row">
+      <label>OpenAI API Key</label>
+      <input id="apiKey" type="password" style="width:300px" placeholder="sk-…">
+      <button class="show-toggle" onclick="toggleKey()">Show</button>
+      <label style="min-width:auto;margin-left:16px">Model</label>
+      <input id="model" type="text" value="{{ default_model }}" style="width:140px">
+      <label style="min-width:auto;margin-left:16px">Framework</label>
+      <select id="framework">
+        <option value="xunit">xUnit</option>
+        <option value="nunit">NUnit</option>
+        <option value="mstest">MSTest</option>
+      </select>
+    </div>
+
+    <div class="prog-wrap"><div id="topBar" class="prog-bar"></div></div>
+  </div>
+
+  <!-- ── Analysis panels ── -->
+  <div class="two-col">
+
+    <!-- Solution structure -->
+    <div class="card">
+      <div class="card-title">Solution Structure</div>
+      <div id="solutionTree"><span style="color:var(--dim)">Analyze a solution to see its structure.</span></div>
+    </div>
+
+    <!-- Coverage before -->
+    <div class="card">
+      <div class="card-title">Coverage — Before Generation</div>
+      <div id="covBefore"><span style="color:var(--dim)">Run analysis to see current coverage.</span></div>
+    </div>
+
+  </div>
+
+  <!-- ── Generate button ── -->
+  <div class="center">
+    <button id="genBtn" class="btn btn-generate" onclick="generate()" disabled>
+      ⚡&nbsp; Generate Unit Tests with GPT-5
+    </button>
+  </div>
+
+  <!-- ── Progress log ── -->
+  <div class="card">
+    <div class="card-title">Progress Log</div>
+    <div id="log" class="log"><span class="l-info">Waiting for action…</span></div>
+  </div>
+
+  <!-- ── Results panels ── -->
+  <div class="two-col">
+
+    <div class="card">
+      <div class="card-title">New Tests Added</div>
+      <div id="newTests"><span style="color:var(--dim)">Tests will appear here after generation.</span></div>
+    </div>
+
+    <div class="card">
+      <div class="card-title">Coverage — After Generation</div>
+      <div id="covAfter"><span style="color:var(--dim)">Updated coverage will appear here after generation.</span></div>
+    </div>
+
+  </div>
+
+</div><!-- /wrap -->
+
+<div class="statusbar" id="statusBar">Ready</div>
+
+<script>
+// ─────────────────────────────────────────────
+//  Helpers
+// ─────────────────────────────────────────────
+function setStatus(msg){ document.getElementById('statusBar').textContent = msg; }
+function busy(on){
+  document.getElementById('analyzeBtn').disabled = on;
+  const bar = document.getElementById('topBar');
+  if(on){ bar.classList.add('indeterminate'); }
+  else  { bar.classList.remove('indeterminate'); bar.style.width='0'; }
+}
+
+function toggleKey(){
+  const el = document.getElementById('apiKey');
+  const btn = event.target;
+  if(el.type === 'password'){ el.type='text'; btn.textContent='Hide'; }
+  else { el.type='password'; btn.textContent='Show'; }
+}
+
+// ─────────────────────────────────────────────
+//  Log
+// ─────────────────────────────────────────────
+let logEl;
+window.addEventListener('DOMContentLoaded', ()=>{ logEl = document.getElementById('log'); });
+
+function logLine(msg, cls='l-info'){
+  if(!logEl) return;
+  const m = msg.toLowerCase();
+  if(m.startsWith('===') || m.startsWith('\n===')) cls='l-section';
+  else if(m.includes('error') || m.includes('failed')) cls='l-error';
+  else if(m.includes('warn')) cls='l-warn';
+  else if(m.includes('done') || m.includes('complete') || m.includes('created')) cls='l-success';
+  const span = document.createElement('span');
+  span.className = cls;
+  span.textContent = msg + '\n';
+  logEl.appendChild(span);
+  logEl.scrollTop = logEl.scrollHeight;
+}
+function clearLog(){ logEl.innerHTML=''; }
+
+// ─────────────────────────────────────────────
+//  Browse
+// ─────────────────────────────────────────────
+async function browse(){
+  setStatus('Opening folder dialog…');
+  try{
+    const r = await fetch('/browse', {method:'POST'});
+    const d = await r.json();
+    if(d.path) document.getElementById('folderPath').value = d.path;
+    else alert(d.error || 'Could not open folder dialog.\nPlease paste the path manually.');
+  }catch(e){ alert('Browse failed: ' + e); }
+  setStatus('Ready');
+}
+
+// ─────────────────────────────────────────────
+//  Analyze
+// ─────────────────────────────────────────────
+async function analyze(){
+  const folder = document.getElementById('folderPath').value.trim();
+  if(!folder){ alert('Please enter or browse to a solution folder.'); return; }
+
+  clearLog();
+  logLine('=== Analyzing solution ===');
+  busy(true); setStatus('Analyzing…');
+
+  document.getElementById('solutionTree').innerHTML = '<span style="color:var(--dim)">Loading…</span>';
+  document.getElementById('covBefore').innerHTML    = '<span style="color:var(--dim)">Loading…</span>';
+  document.getElementById('genBtn').disabled = true;
+
+  try{
+    const r   = await fetch('/analyze', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({folder})});
+    const d   = await r.json();
+
+    (d.progress||[]).forEach(m => logLine(m));
+
+    if(!r.ok){ logLine('Error: ' + (d.error||r.statusText), 'l-error'); busy(false); setStatus('Analysis failed.'); return; }
+
+    renderSolution(d.solution);
+    renderCoverage('covBefore', d.coverage);
+
+    document.getElementById('genBtn').disabled = false;
+    setStatus(`Ready — ${d.solution.source_projects.length} source project(s) | Line coverage: ${d.coverage.line_pct}%`);
+    logLine(`Analysis complete. Line coverage: ${d.coverage.line_pct}%  Branch: ${d.coverage.branch_pct}%`, 'l-success');
+    if(d.coverage.error) logLine('Note: ' + d.coverage.error, 'l-warn');
+  }catch(e){ logLine('Error: '+e,'l-error'); setStatus('Analysis failed.'); }
+
+  busy(false);
+}
+
+// ─────────────────────────────────────────────
+//  Generate
+// ─────────────────────────────────────────────
+async function generate(){
+  const apiKey   = document.getElementById('apiKey').value.trim();
+  const model    = document.getElementById('model').value.trim();
+  const framework= document.getElementById('framework').value;
+
+  if(!apiKey){ alert('Enter your OpenAI API key first.'); return; }
+
+  logLine('\n=== Generating unit tests ===');
+  document.getElementById('genBtn').disabled = true;
+  document.getElementById('newTests').innerHTML  = '<span style="color:var(--dim)">Generating…</span>';
+  document.getElementById('covAfter').innerHTML  = '<span style="color:var(--dim)">Generating…</span>';
+  busy(true); setStatus('Generating tests…');
+
+  // Start generation on server
+  const startRes = await fetch('/generate',{
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({api_key:apiKey, model, framework})
+  });
+  if(!startRes.ok){
+    const d = await startRes.json();
+    logLine('Error: '+(d.error||'Unknown'), 'l-error');
+    busy(false); document.getElementById('genBtn').disabled=false; return;
+  }
+
+  // Stream SSE events
+  const evtSrc = new EventSource('/generate-stream');
+  evtSrc.onmessage = function(e){
+    const msg = JSON.parse(e.data);
+    if(msg.type === 'ping') return;
+    if(msg.type === 'log'){ logLine(msg.msg); return; }
+
+    evtSrc.close();
+    busy(false);
+    document.getElementById('genBtn').disabled = false;
+
+    if(msg.type === 'error'){
+      logLine('Generation error:\n' + msg.msg, 'l-error');
+      setStatus('Generation failed.');
+      return;
+    }
+
+    // done
+    const res = msg.result;
+    renderNewTests(res.generated_tests);
+    if(res.coverage_after)  renderCoverage('covAfter', res.coverage_after);
+    if(res.coverage_before) renderCoverage('covBefore', res.coverage_before);
+
+    const total   = res.generated_tests.length;
+    const methods = res.generated_tests.reduce((s,t)=>s+t.method_count,0);
+    logLine(`\nDone! Generated ${total} test class(es), ${methods} test method(s).`, 'l-success');
+    if(res.errors && res.errors.length){
+      res.errors.forEach(e => logLine('Warning: '+e, 'l-warn'));
+    }
+    if(res.coverage_after){
+      const before = res.coverage_before ? res.coverage_before.line_pct : 0;
+      logLine(`Coverage: ${before}% → ${res.coverage_after.line_pct}% lines  |  Branches: ${res.coverage_after.branch_pct}%`, 'l-success');
+    }
+    setStatus(`Generation complete — ${total} test class(es) written.`);
+  };
+  evtSrc.onerror = function(){
+    evtSrc.close();
+    busy(false);
+    document.getElementById('genBtn').disabled = false;
+    logLine('SSE connection lost.', 'l-warn');
+    setStatus('Connection lost during generation.');
+  };
+}
+
+// ─────────────────────────────────────────────
+//  Render: solution tree
+// ─────────────────────────────────────────────
+function renderSolution(sol){
+  let html = '';
+  if(sol.source_projects.length){
+    html += '<div class="proj-section">Source Projects</div><ul class="proj-list">';
+    sol.source_projects.forEach(p=>{
+      html += `<li class="proj-item">
+        <span class="proj-badge badge-src">Source</span>
+        <strong>${esc(p.name)}</strong>
+        <span class="proj-detail">${esc(p.framework)} &nbsp;·&nbsp; ${p.files} file(s)</span>
+      </li>`;
+    });
+    html += '</ul>';
+  }
+  if(sol.test_projects.length){
+    html += '<div class="proj-section" style="margin-top:12px">Test Projects</div><ul class="proj-list">';
+    sol.test_projects.forEach(p=>{
+      html += `<li class="proj-item">
+        <span class="proj-badge badge-test">Test</span>
+        <strong>${esc(p.name)}</strong>
+        <span class="proj-detail">${esc(p.framework)} &nbsp;·&nbsp; ${esc(p.test_framework)}</span>
+      </li>`;
+    });
+    html += '</ul>';
+  }
+  if(!html) html = '<span style="color:var(--dim)">No projects found.</span>';
+  document.getElementById('solutionTree').innerHTML = html;
+}
+
+// ─────────────────────────────────────────────
+//  Render: coverage panel
+// ─────────────────────────────────────────────
+function pctClass(v){ return v>=80?'good':v>=50?'warn':'bad'; }
+function fillClass(v){ return v>=80?'fill-good':v>=50?'fill-warn':'fill-bad'; }
+
+function renderCoverage(elId, cov){
+  if(!cov){ document.getElementById(elId).innerHTML='<span style="color:var(--dim)">No data.</span>'; return; }
+
+  let html = `<div class="cov-overall">
+    <span>Lines: <span class="pct ${pctClass(cov.line_pct)}">${cov.line_pct}%</span></span>
+    <span>Branches: <span class="pct ${pctClass(cov.branch_pct)}">${cov.branch_pct}%</span></span>
+  </div>`;
+
+  if(cov.error && !cov.packages.length){
+    html += `<div class="alert alert-warn">${esc(cov.error)}</div>`;
+    document.getElementById(elId).innerHTML = html; return;
+  }
+
+  if(cov.packages.length){
+    html += '<table class="cov-table"><thead><tr><th>Class / Package</th><th>Lines</th><th>Branches</th><th class="bar-cell"></th></tr></thead><tbody>';
+    cov.packages.forEach(pkg=>{
+      html += `<tr class="pkg-row">
+        <td>${esc(pkg.name)}</td>
+        <td class="pct ${pctClass(pkg.line_pct)}">${pkg.line_pct}%</td>
+        <td class="pct ${pctClass(pkg.branch_pct)}">${pkg.branch_pct}%</td>
+        <td class="bar-cell"><div class="mini-bar"><div class="mini-bar-fill ${fillClass(pkg.line_pct)}" style="width:${pkg.line_pct}%"></div></div></td>
+      </tr>`;
+      pkg.classes.forEach(cls=>{
+        html += `<tr class="cls-row">
+          <td>${esc(cls.name)}</td>
+          <td class="pct ${pctClass(cls.line_pct)}">${cls.line_pct}%</td>
+          <td class="pct ${pctClass(cls.branch_pct)}">${cls.branch_pct}%</td>
+          <td class="bar-cell"><div class="mini-bar"><div class="mini-bar-fill ${fillClass(cls.line_pct)}" style="width:${cls.line_pct}%"></div></div></td>
+        </tr>`;
+      });
+    });
+    html += '</tbody></table>';
+  }
+  if(cov.error){
+    html += `<div class="alert alert-warn" style="margin-top:8px">${esc(cov.error)}</div>`;
+  }
+  document.getElementById(elId).innerHTML = html;
+}
+
+// ─────────────────────────────────────────────
+//  Render: new tests
+// ─────────────────────────────────────────────
+function renderNewTests(tests){
+  if(!tests || !tests.length){
+    document.getElementById('newTests').innerHTML='<span style="color:var(--dim)">No tests were generated.</span>';
+    return;
+  }
+  let html = '<table class="tests-table"><thead><tr><th>Test File</th><th>Test Project</th><th>Methods</th></tr></thead><tbody>';
+  tests.forEach(t=>{
+    html += `<tr>
+      <td>${esc(t.test_file)}</td>
+      <td style="color:var(--dim)">${esc(t.test_project)}</td>
+      <td><span class="method-badge">${t.method_count}</span></td>
+    </tr>`;
+  });
+  html += '</tbody></table>';
+  document.getElementById('newTests').innerHTML = html;
+}
+
+// ─────────────────────────────────────────────
+//  Util
+// ─────────────────────────────────────────────
+function esc(s){ const d=document.createElement('div'); d.textContent=s||''; return d.innerHTML; }
+</script>
+</body>
+</html>
