@@ -68,9 +68,9 @@ def browse():
                 ["powershell", "-NoProfile", "-Command", ps_script],
                 capture_output=True, text=True, timeout=60,
             )
-            path = result.stdout.strip()
+            path = result.stdout.strip().strip('\r').strip()
             if result.returncode == 0 and path:
-                return jsonify({"path": path})
+                return jsonify({"path": os.path.normpath(path)})
             return jsonify({"error": "Dialog cancelled"}), 400
 
         else:
@@ -97,8 +97,16 @@ def analyze():
     data = request.get_json(force=True)
     folder = (data.get("folder") or "").strip()
 
+    # Normalize: strip surrounding quotes, carriage returns, and unify separators
+    folder = folder.strip('"').strip("'").strip('\r').strip()
+    if folder:
+        folder = os.path.normpath(folder)
+
     if not folder or not os.path.isdir(folder):
-        return jsonify({"error": "Invalid or missing folder path"}), 400
+        return jsonify({
+            "error": f"Folder not found: '{folder}'. "
+                     "Verify the path exists and the app has permission to read it."
+        }), 400
 
     progress: list[str] = []
 
