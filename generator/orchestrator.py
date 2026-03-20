@@ -45,14 +45,9 @@ def analyze_only(
     if progress_cb:
         progress_cb("Scanning for .sln file...")
 
-    solution = analyze_solution(folder_path)
+    solution = analyze_solution(folder_path, progress_cb=progress_cb)
     if not solution:
         return None, CoverageReport(0.0, 0.0, error="No .sln file found in folder.")
-
-    if progress_cb:
-        progress_cb(f"Found solution: {os.path.basename(solution.sln_path)}")
-        progress_cb(f"  Source projects : {len(solution.source_projects)}")
-        progress_cb(f"  Test projects   : {len(solution.test_projects)}")
 
     coverage = _run_or_estimate_coverage(solution, progress_cb)
     return solution, coverage

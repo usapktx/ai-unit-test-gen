@@ -14,7 +14,7 @@ TEST_PACKAGES = {"xunit", "nunit", "mstest", "microsoft.visualstudio.testtools"}
 # .sln project line format
 SLN_PROJECT_RE = re.compile(
     r'^Project\("\{[A-F0-9-]+\}"\)\s*=\s*"([^"]+)"\s*,\s*"([^"]+)"\s*,\s*"\{([A-F0-9-]+)\}"',
-    re.IGNORECASE
+    re.IGNORECASE | re.MULTILINE
 )
 
 
@@ -77,37 +77,58 @@ def _find_sln(folder_path: str, max_depth: int = 3) -> Optional[str]:
     return None
 
 
-def analyze_solution(folder_path: str) -> Optional[SolutionInfo]:
+def analyze_solution(folder_path: str,
+                     progress_cb=None) -> Optional[SolutionInfo]:
     """
     Find and parse the .sln file in folder_path or its subdirectories (up to 3 levels deep).
     Returns None if not found.
     """
+    def _log(msg):
+        if progress_cb:
+            progress_cb(msg)
+
     sln_path = _find_sln(folder_path, max_depth=3)
     if not sln_path:
+        _log("No .sln file found.")
         return None
 
+    _log(f"Found solution: {os.path.basename(sln_path)}")
     solution_dir = os.path.dirname(sln_path)
     info = SolutionInfo(sln_path=sln_path, solution_dir=solution_dir)
 
     with open(sln_path, "r", encoding="utf-8-sig", errors="ignore") as f:
         content = f.read()
 
-    for match in SLN_PROJECT_RE.finditer(content):
+    # Normalise Windows line endings so ^ in MULTILINE regex matches correctly
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
+
+    matches = list(SLN_PROJECT_RE.finditer(content))
+    _log(f"  .sln contains {len(matches)} Project() entries")
+
+    for match in matches:
         name, rel_path, guid = match.group(1), match.group(2), match.group(3)
         # Skip solution folders (no .csproj)
-        if not rel_path.endswith(".csproj"):
+        if not rel_path.lower().endswith(".csproj"):
+            _log(f"  Skipping non-csproj entry: {name}")
             continue
-        # Normalize path separators
+        # Normalize path separators (Windows backslashes -> OS separator)
         rel_path = rel_path.replace("\\", os.sep)
         abs_path = os.path.normpath(os.path.join(solution_dir, rel_path))
+        if not os.path.isfile(abs_path):
+            _log(f"  WARNING: .csproj not found at {abs_path}")
+            continue
         proj = DotNetProject(
             name=name, path=rel_path, guid=guid,
             abs_path=os.path.dirname(abs_path),
             csproj_path=abs_path,
         )
         _enrich_project(proj)
+        kind = "test" if proj.is_test_project else "source"
+        _log(f"  Found {kind} project: {name}")
         info.projects.append(proj)
 
+    _log(f"  Total: {len(info.source_projects)} source project(s), "
+         f"{len(info.test_projects)} test project(s)")
     return info
 
 
