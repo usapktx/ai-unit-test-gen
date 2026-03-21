@@ -88,6 +88,7 @@ def _create_test_project(
         "-o", test_proj_dir,
         "--framework", framework,
         "--force",
+        "--no-restore",
     ]
     _run(cmd, progress_cb)
 
@@ -107,7 +108,7 @@ def _create_test_project(
         packages += config.MSTEST_PACKAGES
 
     for pkg in packages:
-        _run(["dotnet", "add", csproj_path, "package", pkg], progress_cb)
+        _run(["dotnet", "add", csproj_path, "package", pkg, "--no-restore"], progress_cb)
 
     # Reference source project
     _run(
