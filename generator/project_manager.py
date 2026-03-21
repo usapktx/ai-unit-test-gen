@@ -38,6 +38,22 @@ def _references_project(test_proj: DotNetProject, source_proj: DotNetProject) ->
     return source_proj.name in content or os.path.basename(source_proj.csproj_path) in content
 
 
+def _latest_sdk_tfm() -> str:
+    """Return the highest net<N>.0 TFM supported by the installed SDK."""
+    try:
+        proc = subprocess.run(
+            ["dotnet", "--version"], capture_output=True, text=True, timeout=10
+        )
+        if proc.returncode == 0:
+            ver = proc.stdout.strip()          # e.g. "8.0.300" or "9.0.100"
+            major = int(ver.split(".")[0])
+            if major >= 5:
+                return f"net{major}.0"
+    except Exception:
+        pass
+    return "net8.0"   # safe fallback
+
+
 def _create_test_project(
     solution: SolutionInfo,
     source_project: DotNetProject,
@@ -50,7 +66,16 @@ def _create_test_project(
     if progress_cb:
         progress_cb(f"Creating test project: {test_proj_name}")
 
-    framework = source_project.target_framework or "net48"
+    # dotnet new only accepts modern TFMs (net5.0+). For .NET Framework 4.x
+    # source projects we create the test project targeting the latest LTS so
+    # the dotnet test runner works; the project reference still exercises the
+    # net4x source code.
+    src_fw = (source_project.target_framework or "").lower()
+    if src_fw.startswith("net4") or src_fw in ("net35", "net20"):
+        framework = _latest_sdk_tfm()
+    else:
+        framework = source_project.target_framework or _latest_sdk_tfm()
+
     template = {
         "xunit": "xunit",
         "nunit": "nunit",
