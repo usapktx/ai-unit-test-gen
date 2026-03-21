@@ -51,7 +51,7 @@ class InternalAIClient:
         print(f"[FiservAI] api_key   : {self._api_key[:4]}...{self._api_key[-4:]} (len={len(self._api_key)})")
         print(f"[FiservAI] api_secret: {self._api_secret[:4]}...{self._api_secret[-4:]} (len={len(self._api_secret)})")
 
-        client = FiservAI(
+        client = FiservAI.FiservAI(
             self._api_key,
             self._api_secret,
             self._endpoint,
