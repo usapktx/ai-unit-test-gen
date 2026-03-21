@@ -7,7 +7,7 @@ Usage:
 """
 
 import asyncio
-import FiservAI
+from fiservai import FiservAI
 from typing import List, Dict
 
 
@@ -46,11 +46,16 @@ class InternalAIClient:
                 parts.append(content)
         question = "\n\n".join(parts)
 
-        client = FiservAI.FiservAI(
+        # Debug: log credential shapes to terminal (not values)
+        print(f"[FiservAI] endpoint  : {self._endpoint!r}")
+        print(f"[FiservAI] api_key   : {self._api_key[:4]}...{self._api_key[-4:]} (len={len(self._api_key)})")
+        print(f"[FiservAI] api_secret: {self._api_secret[:4]}...{self._api_secret[-4:]} (len={len(self._api_secret)})")
+
+        client = FiservAI(
             self._api_key,
             self._api_secret,
             self._endpoint,
-            temperature=temperature,
+            temperature=0.0,
         )
 
         # Run the async call from this synchronous thread
