@@ -50,7 +50,7 @@ def credentials_from_env() -> AICredentials:
 
 
 # ── dotnet / test project settings ────────────────────────────────────────────
-DEFAULT_TEST_FRAMEWORK = "xunit"   # "xunit" | "nunit" | "mstest"
+DEFAULT_TEST_FRAMEWORK = "mstest"  # "xunit" | "nunit" | "mstest"
 
 TEST_PROJECT_PACKAGES = [
     "coverlet.collector",
