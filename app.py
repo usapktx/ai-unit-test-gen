@@ -110,17 +110,19 @@ def browse():
                 "$owner = New-Object System.Windows.Forms.Form;"
                 "$owner.TopMost = $true;"
                 "$owner.WindowState = 'Minimized';"
-                "$owner.Show();"
-                "$owner.Focus();"
+                "[void]$owner.Show();"
+                "[void]$owner.Focus();"
                 "[void]$d.ShowDialog($owner);"
                 "$owner.Dispose();"
-                "$d.SelectedPath"
+                "Write-Output $d.SelectedPath"
             )
             result = subprocess.run(
                 ["powershell", "-NoProfile", "-Command", ps_script],
                 capture_output=True, text=True, timeout=60,
             )
-            path = result.stdout.strip().strip('\r').strip()
+            # Take the last non-empty line in case any extra output precedes the path
+            lines = [l.strip().strip('\r') for l in result.stdout.splitlines() if l.strip()]
+            path = lines[-1] if lines else ""
             if result.returncode == 0 and path:
                 return jsonify({"path": os.path.normpath(path)})
             return jsonify({"error": "Dialog cancelled"}), 400
