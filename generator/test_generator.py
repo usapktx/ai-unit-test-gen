@@ -18,6 +18,7 @@ def generate_tests_for_class(
     test_framework: str,
     source_project_name: str,
     credentials: AICredentials,
+    method_names: Optional[list] = None,
     progress_cb: Optional[Callable[[str], None]] = None,
 ) -> Optional[str]:
     """
@@ -25,7 +26,8 @@ def generate_tests_for_class(
     unit test class. Returns the generated C# content, or None on failure.
     """
     if progress_cb:
-        progress_cb(f"  Sending {class_name} to AI API ({credentials.model})...")
+        scope = f" [{', '.join(method_names)}]" if method_names else ""
+        progress_cb(f"  Sending {class_name}{scope} to AI API...")
 
     framework_hints = {
         "xunit":  "xUnit.net (using Xunit; use [Fact] and [Theory]/[InlineData])",
@@ -53,17 +55,22 @@ def generate_tests_for_class(
         "10. The test class name must be {cls}Tests."
     ).format(ns=namespace or source_project_name, cls=class_name)
 
+    method_scope = (
+        f"\nOnly generate tests for these methods: {', '.join(method_names)}."
+        if method_names else ""
+    )
     user_prompt = (
         f"Test framework: {fw_hint}\n\n"
         f"Source namespace: {namespace}\n"
         f"Source assembly:  {source_project_name}\n\n"
         f"Generate complete unit tests for the class below. "
-        f"Aim for 100% branch and line coverage.\n\n"
+        f"Aim for 100% branch and line coverage.{method_scope}\n\n"
         f"```csharp\n{source_code}\n```"
     )
 
     try:
-        content = _client(creds=credentials).chat(
+        client = _client(creds=credentials)
+        content = _strip_fences(client.chat(
             model=credentials.model,
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -71,10 +78,26 @@ def generate_tests_for_class(
             ],
             temperature=0.2,
             max_tokens=4096,
-        )
+        ))
+
+        # If the response was truncated, ask the AI to complete it
+        if not _is_complete(content):
+            if progress_cb:
+                progress_cb(f"  Response truncated for {class_name} — requesting completion...")
+            continuation = _strip_fences(client.chat(
+                model=credentials.model,
+                messages=[
+                    {"role": "system", "content": "You are a C# developer. Complete the truncated C# code below. Return ONLY the missing code needed to finish it — no explanation, no repetition of existing code."},
+                    {"role": "user",   "content": f"Complete this truncated C# code:\n\n{content}"},
+                ],
+                temperature=0.2,
+                max_tokens=4096,
+            ))
+            content = content + "\n" + continuation
+
         if progress_cb:
             progress_cb(f"  Tests generated for {class_name}.")
-        return _strip_fences(content)
+        return content
     except Exception as e:
         if progress_cb:
             progress_cb(f"  AI API error for {class_name}: {e}")
@@ -89,6 +112,7 @@ def generate_missing_tests(
     test_framework: str,
     source_project_name: str,
     credentials: AICredentials,
+    method_names: Optional[list] = None,
     progress_cb: Optional[Callable[[str], None]] = None,
 ) -> Optional[str]:
     """
@@ -116,16 +140,21 @@ def generate_missing_tests(
         "5. Return only valid C# method code."
     )
 
+    method_scope = (
+        f" Only add tests for these methods: {', '.join(method_names)}."
+        if method_names else ""
+    )
     user_prompt = (
         f"Test framework: {fw_hint}\n\n"
         f"SOURCE CLASS:\n```csharp\n{source_code}\n```\n\n"
         f"EXISTING TESTS:\n```csharp\n{existing_test_code}\n```\n\n"
-        "Write ONLY the additional test methods to cover untested code paths. "
+        f"Write ONLY the additional test methods to cover untested code paths.{method_scope} "
         "No class wrapper, no using statements."
     )
 
     try:
-        content = _client(creds=credentials).chat(
+        client = _client(creds=credentials)
+        content = _strip_fences(client.chat(
             model=credentials.model,
             messages=[
                 {"role": "system", "content": system_prompt},
@@ -133,8 +162,23 @@ def generate_missing_tests(
             ],
             temperature=0.2,
             max_tokens=3000,
-        )
-        return _strip_fences(content)
+        ))
+
+        if not _is_complete(content):
+            if progress_cb:
+                progress_cb(f"  Response truncated for {class_name} — requesting completion...")
+            continuation = _strip_fences(client.chat(
+                model=credentials.model,
+                messages=[
+                    {"role": "system", "content": "You are a C# developer. Complete the truncated C# code below. Return ONLY the missing code needed to finish it — no explanation, no repetition of existing code."},
+                    {"role": "user",   "content": f"Complete this truncated C# code:\n\n{content}"},
+                ],
+                temperature=0.2,
+                max_tokens=3000,
+            ))
+            content = content + "\n" + continuation
+
+        return content
     except Exception as e:
         if progress_cb:
             progress_cb(f"  AI API error for {class_name}: {e}")
@@ -147,3 +191,23 @@ def _strip_fences(text: str) -> str:
     text = re.sub(r"^```(?:csharp|cs)?\s*", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\s*```\s*$", "", text)
     return text.strip()
+
+
+def _is_complete(code: str) -> bool:
+    """Return True if the C# code has balanced curly braces (not truncated)."""
+    depth = 0
+    in_string = False
+    in_char = False
+    prev = ""
+    for ch in code:
+        if ch == '"' and not in_char and prev != "\\":
+            in_string = not in_string
+        elif ch == "'" and not in_string and prev != "\\":
+            in_char = not in_char
+        elif not in_string and not in_char:
+            if ch == "{":
+                depth += 1
+            elif ch == "}":
+                depth -= 1
+        prev = ch
+    return depth == 0 and code.strip().endswith("}")
