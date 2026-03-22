@@ -107,7 +107,13 @@ def browse():
                 "Add-Type -AssemblyName System.Windows.Forms;"
                 "$d = New-Object System.Windows.Forms.FolderBrowserDialog;"
                 "$d.Description = 'Select .NET solution folder';"
-                "[void]$d.ShowDialog();"
+                "$owner = New-Object System.Windows.Forms.Form;"
+                "$owner.TopMost = $true;"
+                "$owner.WindowState = 'Minimized';"
+                "$owner.Show();"
+                "$owner.Focus();"
+                "[void]$d.ShowDialog($owner);"
+                "$owner.Dispose();"
                 "$d.SelectedPath"
             )
             result = subprocess.run(
