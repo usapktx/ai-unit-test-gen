@@ -69,10 +69,8 @@ def generate_all_tests(
     )
 
     if progress_cb:
-        progress_cb("=== Measuring coverage BEFORE generation ===")
-    result.coverage_before = _run_or_estimate_coverage(solution, progress_cb)
-    if result.coverage_before.used_static_estimate if hasattr(result.coverage_before, 'used_static_estimate') else False:
-        result.used_static_estimate = True
+        progress_cb("=== Measuring coverage BEFORE generation (static analysis) ===")
+    result.coverage_before = _static_coverage(solution, progress_cb)
 
     for src_proj in solution.source_projects:
         if progress_cb:
@@ -97,8 +95,8 @@ def generate_all_tests(
             )
 
     if progress_cb:
-        progress_cb("\n=== Measuring coverage AFTER generation ===")
-    result.coverage_after = _run_or_estimate_coverage(solution, progress_cb)
+        progress_cb("\n=== Measuring coverage AFTER generation (static analysis) ===")
+    result.coverage_after = _static_coverage(solution, progress_cb)
 
     return result
 
@@ -169,14 +167,19 @@ def _process_source_file(
             result.errors.append(f"No test code generated for {cls.name}")
             continue
 
-        written_path = write_test_file(test_proj, cls.name, test_code, progress_cb)
-
-        # Count methods in generated code
+        # Count test methods — skip writing if AI returned no real test methods
         import re
         method_count = len(re.findall(
             r'\[(?:Fact|Test|TestMethod|Theory|TestCase|DataTestMethod)\]',
             test_code
         ))
+        if method_count == 0:
+            if progress_cb:
+                progress_cb(f"  No test methods in AI response for {cls.name} — skipping")
+            result.errors.append(f"AI returned no test methods for {cls.name}")
+            continue
+
+        written_path = write_test_file(test_proj, cls.name, test_code, progress_cb)
 
         result.generated_tests.append(GeneratedTestInfo(
             class_name=cls.name,
@@ -185,6 +188,13 @@ def _process_source_file(
             test_project=test_proj.name,
             method_count=method_count,
         ))
+
+
+def _static_coverage(solution: SolutionInfo, progress_cb) -> CoverageReport:
+    """Static coverage: check which source methods are referenced in test files."""
+    all_source = [sf for p in solution.source_projects for sf in p.source_files]
+    all_test   = [sf for p in solution.test_projects   for sf in p.source_files]
+    return estimate_coverage_static(all_source, all_test)
 
 
 def _run_or_estimate_coverage(
