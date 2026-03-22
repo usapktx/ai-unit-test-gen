@@ -178,6 +178,40 @@ def _process_source_file(
             continue
 
         written_path = write_test_file(test_proj, cls.name, test_code, progress_cb)
+
+        # Top-up pass: if we got fewer test methods than source methods the AI
+        # likely stopped early. Ask for missing tests once more.
+        source_method_count = len(cls.public_methods) + len(cls.constructors)
+        if source_method_count > 0 and method_count < source_method_count:
+            if progress_cb:
+                progress_cb(f"  Coverage looks partial ({method_count} tests for "
+                            f"{source_method_count} source methods) — requesting top-up...")
+            try:
+                with open(written_path, "r", encoding="utf-8-sig", errors="ignore") as f:
+                    written_code = f.read()
+                extra_code = generate_missing_tests(
+                    source_code=source_code,
+                    class_name=cls.name,
+                    namespace=parsed.namespace,
+                    existing_test_code=written_code,
+                    test_framework=test_framework,
+                    source_project_name=src_proj.name,
+                    credentials=credentials,
+                    progress_cb=progress_cb,
+                )
+                if extra_code:
+                    extra_count = len(re.findall(
+                        r'\[(?:Fact|Test|TestMethod|Theory|TestCase|DataTestMethod)\]',
+                        extra_code
+                    ))
+                    if extra_count > 0:
+                        write_test_file(test_proj, cls.name, extra_code, progress_cb)
+                        method_count += extra_count
+                        if progress_cb:
+                            progress_cb(f"  Top-up added {extra_count} more test method(s).")
+            except OSError:
+                pass
+
         result.generated_tests.append(GeneratedTestInfo(
             class_name=cls.name,
             test_file_path=written_path,
