@@ -78,13 +78,6 @@ def run_coverage(
     results_dir = os.path.join(os.path.dirname(solution_path), ".test_results")
     os.makedirs(results_dir, exist_ok=True)
 
-    # Restore only the test projects (not the whole solution) so internal
-    # NuGet packages in source projects don't cause NU1103 failures.
-    if progress_cb:
-        progress_cb("Running dotnet restore on test projects...")
-    for tp in test_project_paths:
-        _run(["dotnet", "restore", tp], progress_cb)
-
     xml_files = []
     for tp in test_project_paths:
         if progress_cb:
