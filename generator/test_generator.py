@@ -18,7 +18,6 @@ def generate_tests_for_class(
     test_framework: str,
     source_project_name: str,
     credentials: AICredentials,
-    method_names: Optional[list] = None,
     progress_cb: Optional[Callable[[str], None]] = None,
 ) -> Optional[str]:
     """
@@ -26,8 +25,7 @@ def generate_tests_for_class(
     unit test class. Returns the generated C# content, or None on failure.
     """
     if progress_cb:
-        scope = f" [{', '.join(method_names)}]" if method_names else ""
-        progress_cb(f"  Sending {class_name}{scope} to AI API...")
+        progress_cb(f"  Sending {class_name} to AI API...")
 
     framework_hints = {
         "xunit":  "xUnit.net (using Xunit; use [Fact] and [Theory]/[InlineData])",
@@ -55,16 +53,12 @@ def generate_tests_for_class(
         "10. The test class name must be {cls}Tests."
     ).format(ns=namespace or source_project_name, cls=class_name)
 
-    method_scope = (
-        f"\nOnly generate tests for these methods: {', '.join(method_names)}."
-        if method_names else ""
-    )
     user_prompt = (
         f"Test framework: {fw_hint}\n\n"
         f"Source namespace: {namespace}\n"
         f"Source assembly:  {source_project_name}\n\n"
         f"Generate complete unit tests for the class below. "
-        f"Aim for 100% branch and line coverage.{method_scope}\n\n"
+        f"Aim for 100% branch and line coverage.\n\n"
         f"```csharp\n{source_code}\n```"
     )
 
@@ -112,7 +106,6 @@ def generate_missing_tests(
     test_framework: str,
     source_project_name: str,
     credentials: AICredentials,
-    method_names: Optional[list] = None,
     progress_cb: Optional[Callable[[str], None]] = None,
 ) -> Optional[str]:
     """
@@ -140,15 +133,11 @@ def generate_missing_tests(
         "5. Return only valid C# method code."
     )
 
-    method_scope = (
-        f" Only add tests for these methods: {', '.join(method_names)}."
-        if method_names else ""
-    )
     user_prompt = (
         f"Test framework: {fw_hint}\n\n"
         f"SOURCE CLASS:\n```csharp\n{source_code}\n```\n\n"
         f"EXISTING TESTS:\n```csharp\n{existing_test_code}\n```\n\n"
-        f"Write ONLY the additional test methods to cover untested code paths.{method_scope} "
+        "Write ONLY the additional test methods to cover untested code paths. "
         "No class wrapper, no using statements."
     )
 
