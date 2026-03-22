@@ -197,6 +197,63 @@ def generate_missing_tests(
         return None
 
 
+def generate_methods_for_batch(
+    source_code: str,
+    class_name: str,
+    method_names: list,
+    test_framework: str,
+    source_project_name: str,
+    credentials: AICredentials,
+    progress_cb: Optional[Callable[[str], None]] = None,
+) -> Optional[str]:
+    """
+    Generate test method bodies ONLY for the specified methods.
+    Returns method bodies only (no class wrapper, no using statements).
+    Keeps the call small — no existing test code sent as context.
+    """
+    framework_hints = {
+        "xunit":  "xUnit.net ([Fact], [Theory]/[InlineData])",
+        "nunit":  "NUnit ([Test], [TestCase])",
+        "mstest": "MSTest ([TestMethod], [DataTestMethod])",
+    }
+    fw_hint = framework_hints.get(test_framework, framework_hints["xunit"])
+    trimmed_source = _strip_cs_comments(source_code)
+
+    system_prompt = (
+        "You are an expert C# developer. Generate unit test method bodies only.\n"
+        "Rules:\n"
+        "1. Return ONLY test method bodies — no class declaration, no using statements, no namespace.\n"
+        "2. Do not add opening or closing class braces.\n"
+        "3. Use Moq for mocking where needed.\n"
+        "4. Return only valid C# method code."
+    )
+    user_prompt = (
+        f"Test framework: {fw_hint}\n"
+        f"Source assembly: {source_project_name}\n\n"
+        f"Generate test methods for ONLY these methods of {class_name}: "
+        f"{', '.join(method_names)}\n\n"
+        f"```csharp\n{trimmed_source}\n```"
+    )
+
+    try:
+        content = _strip_fences(_client(creds=credentials).chat(
+            model=credentials.model,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user",   "content": user_prompt},
+            ],
+            temperature=0.2,
+            max_tokens=4096,
+        ))
+        if _is_refusal(content):
+            return None
+        return content if _looks_like_csharp(content) else None
+    except Exception as e:
+        if progress_cb:
+            progress_cb(f"  AI API error (batch): {e}")
+        return None
+
+
 def _strip_cs_comments(code: str) -> str:
     """Remove C# comments and collapse excessive blank lines to reduce token count."""
     # Remove /// XML doc comments

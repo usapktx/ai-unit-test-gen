@@ -9,7 +9,7 @@ from typing import List, Optional, Callable
 from analyzer.solution_analyzer import SolutionInfo, DotNetProject, analyze_solution
 from analyzer.csharp_parser import parse_file, CSharpClass
 from coverage.coverage_runner import CoverageReport, run_coverage, estimate_coverage_static
-from generator.test_generator import generate_tests_for_class, generate_missing_tests
+from generator.test_generator import generate_tests_for_class, generate_missing_tests, generate_methods_for_batch
 from generator.project_manager import ensure_test_project, write_test_file
 from config import AICredentials
 import config
@@ -101,6 +101,16 @@ def generate_all_tests(
     return result
 
 
+METHODS_PER_BATCH = 5
+
+
+def _count_test_methods(code: str) -> int:
+    import re
+    return len(re.findall(
+        r'\[(?:Fact|Test|TestMethod|Theory|TestCase|DataTestMethod)\]', code
+    ))
+
+
 def _process_source_file(
     source_file: str,
     src_proj: DotNetProject,
@@ -110,7 +120,6 @@ def _process_source_file(
     result: OrchestrationResult,
     progress_cb,
 ):
-    import re
     parsed = parse_file(source_file)
     if not parsed:
         return
@@ -122,9 +131,6 @@ def _process_source_file(
             continue
         if "generated" in cls.name.lower() or cls.name.endswith("Designer"):
             continue
-
-        if progress_cb:
-            progress_cb(f"  Generating tests for: {cls.name}")
 
         try:
             with open(source_file, "r", encoding="utf-8-sig", errors="ignore") as f:
@@ -141,8 +147,21 @@ def _process_source_file(
             except OSError:
                 pass
 
+        all_methods = [m.name for m in cls.public_methods]
+        total_batches = max(1, (len(all_methods) + METHODS_PER_BATCH - 1) // METHODS_PER_BATCH)
+
+        if progress_cb:
+            progress_cb(f"  Generating tests for: {cls.name} "
+                        f"({len(all_methods)} methods, {total_batches} batch(es))")
+
+        total_method_count = 0
+        written_path = None
+
+        # --- First call: full test class for first batch (or all if small) ---
+        first_batch = all_methods[:METHODS_PER_BATCH] if all_methods else []
+
         if existing_test_code:
-            test_code = generate_missing_tests(
+            first_code = generate_missing_tests(
                 source_code=source_code,
                 class_name=cls.name,
                 namespace=parsed.namespace,
@@ -153,7 +172,7 @@ def _process_source_file(
                 progress_cb=progress_cb,
             )
         else:
-            test_code = generate_tests_for_class(
+            first_code = generate_tests_for_class(
                 source_code=source_code,
                 class_name=cls.name,
                 namespace=parsed.namespace,
@@ -163,62 +182,55 @@ def _process_source_file(
                 progress_cb=progress_cb,
             )
 
-        if not test_code:
+        if not first_code:
             result.errors.append(f"No test code generated for {cls.name}")
             continue
 
-        method_count = len(re.findall(
-            r'\[(?:Fact|Test|TestMethod|Theory|TestCase|DataTestMethod)\]',
-            test_code
-        ))
-        if method_count == 0:
+        mc = _count_test_methods(first_code)
+        if mc == 0:
             if progress_cb:
                 progress_cb(f"  No test methods in AI response for {cls.name} — skipping")
             result.errors.append(f"AI returned no test methods for {cls.name}")
             continue
 
-        written_path = write_test_file(test_proj, cls.name, test_code, progress_cb)
+        total_method_count += mc
+        written_path = write_test_file(test_proj, cls.name, first_code, progress_cb)
 
-        # Top-up pass: if we got fewer test methods than source methods the AI
-        # likely stopped early. Ask for missing tests once more.
-        source_method_count = len(cls.public_methods) + len(cls.constructors)
-        if source_method_count > 0 and method_count < source_method_count:
+        # --- Subsequent batches: lightweight calls, no accumulated context ---
+        remaining_methods = all_methods[METHODS_PER_BATCH:]
+        for i in range(0, len(remaining_methods), METHODS_PER_BATCH):
+            batch = remaining_methods[i:i + METHODS_PER_BATCH]
+            batch_num = (i // METHODS_PER_BATCH) + 2
             if progress_cb:
-                progress_cb(f"  Coverage looks partial ({method_count} tests for "
-                            f"{source_method_count} source methods) — requesting top-up...")
-            try:
-                with open(written_path, "r", encoding="utf-8-sig", errors="ignore") as f:
-                    written_code = f.read()
-                extra_code = generate_missing_tests(
-                    source_code=source_code,
-                    class_name=cls.name,
-                    namespace=parsed.namespace,
-                    existing_test_code=written_code,
-                    test_framework=test_framework,
-                    source_project_name=src_proj.name,
-                    credentials=credentials,
-                    progress_cb=progress_cb,
-                )
-                if extra_code:
-                    extra_count = len(re.findall(
-                        r'\[(?:Fact|Test|TestMethod|Theory|TestCase|DataTestMethod)\]',
-                        extra_code
-                    ))
-                    if extra_count > 0:
-                        write_test_file(test_proj, cls.name, extra_code, progress_cb)
-                        method_count += extra_count
-                        if progress_cb:
-                            progress_cb(f"  Top-up added {extra_count} more test method(s).")
-            except OSError:
-                pass
+                progress_cb(f"    Batch {batch_num}/{total_batches}: {', '.join(batch)}")
 
-        result.generated_tests.append(GeneratedTestInfo(
-            class_name=cls.name,
-            test_file_path=written_path,
-            source_project=src_proj.name,
-            test_project=test_proj.name,
-            method_count=method_count,
-        ))
+            batch_code = generate_methods_for_batch(
+                source_code=source_code,
+                class_name=cls.name,
+                method_names=batch,
+                test_framework=test_framework,
+                source_project_name=src_proj.name,
+                credentials=credentials,
+                progress_cb=progress_cb,
+            )
+            if not batch_code:
+                if progress_cb:
+                    progress_cb(f"    Batch {batch_num} returned nothing — skipping")
+                continue
+
+            bmc = _count_test_methods(batch_code)
+            if bmc > 0:
+                write_test_file(test_proj, cls.name, batch_code, progress_cb)
+                total_method_count += bmc
+
+        if written_path:
+            result.generated_tests.append(GeneratedTestInfo(
+                class_name=cls.name,
+                test_file_path=written_path,
+                source_project=src_proj.name,
+                test_project=test_proj.name,
+                method_count=total_method_count,
+            ))
 
 
 def _static_coverage(solution: SolutionInfo, progress_cb) -> CoverageReport:
