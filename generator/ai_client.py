@@ -55,7 +55,7 @@ class InternalAIClient:
             self._api_key,
             self._api_secret,
             base_url=self._endpoint if self._endpoint is not None else None,
-            Temperature=0.0,
+            temperature=0.0,
         )
 
         # Run the async call from this synchronous thread
