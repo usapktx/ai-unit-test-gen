@@ -53,13 +53,16 @@ def generate_tests_for_class(
         "10. The test class name must be {cls}Tests."
     ).format(ns=namespace or source_project_name, cls=class_name)
 
+    # Strip comments to reduce input tokens and leave more room for AI output
+    trimmed_source = _strip_cs_comments(source_code)
+
     user_prompt = (
         f"Test framework: {fw_hint}\n\n"
         f"Source namespace: {namespace}\n"
         f"Source assembly:  {source_project_name}\n\n"
         f"Generate complete unit tests for the class below. "
         f"Aim for 100% branch and line coverage.\n\n"
-        f"```csharp\n{source_code}\n```"
+        f"```csharp\n{trimmed_source}\n```"
     )
 
     try:
@@ -74,6 +77,12 @@ def generate_tests_for_class(
             max_tokens=4096,
         ))
 
+        # Reject refusal/apology responses
+        if _is_refusal(content):
+            if progress_cb:
+                progress_cb(f"  AI declined to generate tests for {class_name} — skipping")
+            return None
+
         # If the response was truncated, ask the AI to complete it
         if not _is_complete(content):
             if progress_cb:
@@ -81,13 +90,19 @@ def generate_tests_for_class(
             continuation = _strip_fences(client.chat(
                 model=credentials.model,
                 messages=[
-                    {"role": "system", "content": "You are a C# developer. Complete the truncated C# code below. Return ONLY the missing code needed to finish it — no explanation, no repetition of existing code."},
+                    {"role": "system", "content": "You are a C# developer. Complete the truncated C# code below. Return ONLY the missing closing braces and any remaining method bodies needed to finish it. No explanation."},
                     {"role": "user",   "content": f"Complete this truncated C# code:\n\n{content}"},
                 ],
                 temperature=0.2,
                 max_tokens=4096,
             ))
-            content = content + "\n" + continuation
+            # Only append if the continuation looks like C# code, not a refusal
+            if _looks_like_csharp(continuation) and not _is_refusal(continuation):
+                content = content + "\n" + continuation
+            else:
+                if progress_cb:
+                    progress_cb(f"  Could not complete truncated response for {class_name} — skipping")
+                return None
 
         if progress_cb:
             progress_cb(f"  Tests generated for {class_name}.")
@@ -133,9 +148,11 @@ def generate_missing_tests(
         "5. Return only valid C# method code."
     )
 
+    trimmed_source = _strip_cs_comments(source_code)
+
     user_prompt = (
         f"Test framework: {fw_hint}\n\n"
-        f"SOURCE CLASS:\n```csharp\n{source_code}\n```\n\n"
+        f"SOURCE CLASS:\n```csharp\n{trimmed_source}\n```\n\n"
         f"EXISTING TESTS:\n```csharp\n{existing_test_code}\n```\n\n"
         "Write ONLY the additional test methods to cover untested code paths. "
         "No class wrapper, no using statements."
@@ -153,19 +170,25 @@ def generate_missing_tests(
             max_tokens=3000,
         ))
 
+        if _is_refusal(content):
+            return None
+
         if not _is_complete(content):
             if progress_cb:
                 progress_cb(f"  Response truncated for {class_name} — requesting completion...")
             continuation = _strip_fences(client.chat(
                 model=credentials.model,
                 messages=[
-                    {"role": "system", "content": "You are a C# developer. Complete the truncated C# code below. Return ONLY the missing code needed to finish it — no explanation, no repetition of existing code."},
+                    {"role": "system", "content": "You are a C# developer. Complete the truncated C# code below. Return ONLY the missing closing braces and any remaining method bodies needed to finish it. No explanation."},
                     {"role": "user",   "content": f"Complete this truncated C# code:\n\n{content}"},
                 ],
                 temperature=0.2,
                 max_tokens=3000,
             ))
-            content = content + "\n" + continuation
+            if _looks_like_csharp(continuation) and not _is_refusal(continuation):
+                content = content + "\n" + continuation
+            else:
+                return None
 
         return content
     except Exception as e:
@@ -174,12 +197,44 @@ def generate_missing_tests(
         return None
 
 
+def _strip_cs_comments(code: str) -> str:
+    """Remove C# comments and collapse excessive blank lines to reduce token count."""
+    # Remove /// XML doc comments
+    code = re.sub(r'[ \t]*///.*', '', code)
+    # Remove // line comments
+    code = re.sub(r'[ \t]*//.*', '', code)
+    # Remove /* ... */ block comments (including multi-line)
+    code = re.sub(r'/\*.*?\*/', '', code, flags=re.DOTALL)
+    # Collapse 3+ consecutive blank lines to one
+    code = re.sub(r'\n{3,}', '\n\n', code)
+    return code.strip()
+
+
 def _strip_fences(text: str) -> str:
     """Remove markdown code fences the model may have included."""
     text = text.strip()
     text = re.sub(r"^```(?:csharp|cs)?\s*", "", text, flags=re.IGNORECASE)
     text = re.sub(r"\s*```\s*$", "", text)
     return text.strip()
+
+
+def _is_refusal(text: str) -> bool:
+    """Return True if the AI returned an apology/refusal instead of C# code."""
+    lowered = text.lower().strip()
+    refusal_phrases = ("sorry", "i'm sorry", "i cannot", "i can't", "i don't",
+                       "as an ai", "i am not able", "i'm not able",
+                       "i'm unable", "i am unable")
+    # Short responses with refusal phrases and no C# structure are refusals
+    if any(lowered.startswith(p) for p in refusal_phrases):
+        return True
+    if len(text) < 200 and any(p in lowered for p in refusal_phrases):
+        return True
+    return False
+
+
+def _looks_like_csharp(text: str) -> bool:
+    """Return True if the text appears to contain C# code."""
+    return bool(re.search(r'[\{\}]|public |private |void |using |namespace ', text))
 
 
 def _is_complete(code: str) -> bool:
