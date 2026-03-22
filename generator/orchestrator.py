@@ -89,6 +89,8 @@ def generate_all_tests(
             continue
 
         # Process each source file
+        if progress_cb:
+            progress_cb(f"  {len(src_proj.source_files)} source file(s) to process")
         for sf in src_proj.source_files:
             _process_source_file(
                 sf, src_proj, test_proj, credentials, tf, result, progress_cb
@@ -124,12 +126,22 @@ def _process_source_file(
     if not parsed:
         return
 
+    if progress_cb:
+        progress_cb(f"  Scanning: {os.path.basename(source_file)} "
+                    f"({len(parsed.classes)} class(es) found)")
+
     for cls in parsed.classes:
         if cls.is_interface:
+            if progress_cb:
+                progress_cb(f"    Skipping interface: {cls.name}")
             continue
         if not cls.public_methods and not cls.constructors and not cls.properties:
+            if progress_cb:
+                progress_cb(f"    Skipping {cls.name} — no public methods/constructors/properties")
             continue
         if "generated" in cls.name.lower() or cls.name.endswith("Designer"):
+            if progress_cb:
+                progress_cb(f"    Skipping {cls.name} — name suggests auto-generated class")
             continue
 
         try:
