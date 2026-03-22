@@ -61,10 +61,14 @@ class InternalAIClient:
         # Run the async call from this synchronous thread
         resp = asyncio.run(client.chat_completion_async(question))
 
-        # Handle both plain-string and object responses
+        # Handle ChatCompletion object (choices[0].message.content)
+        if hasattr(resp, "choices") and resp.choices:
+            msg = resp.choices[0].message
+            return (msg.content or "") if hasattr(msg, "content") else str(msg)
+        # Plain string response
         if isinstance(resp, str):
             return resp
-        # If the library returns an object, try common attribute names
+        # Fallback: try common attribute names
         for attr in ("content", "text", "message", "result"):
             if hasattr(resp, attr):
                 return getattr(resp, attr) or ""
